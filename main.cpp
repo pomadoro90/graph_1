@@ -22,10 +22,10 @@
 static const int WINDOW_WIDTH  = 800;
 static const int WINDOW_HEIGHT = 600;
 
-// Цвет фона (голубое небо)
-static const float SKY_R = 0.53f;
-static const float SKY_G = 0.81f;
-static const float SKY_B = 0.92f;
+// Цвет фона (молочный)
+static const float SKY_R = 0.98f;
+static const float SKY_G = 0.96f;
+static const float SKY_B = 0.90f;
 
 // Ограничения смещения 2D-сцены
 static const float OFFSET_X_MIN = -0.5f;
@@ -41,13 +41,8 @@ static const float CAM_X_INIT = 0.0f;
 static const float CAM_Y_INIT = 1.0f;
 static const float CAM_Z_INIT = 5.0f;
 
-// Ограничения камеры
-static const float CAM_X_MIN = -5.0f;
-static const float CAM_X_MAX =  5.0f;
-static const float CAM_Y_MIN = -3.0f;
-static const float CAM_Y_MAX =  5.0f;
-static const float CAM_Z_MIN =  1.0f;
-static const float CAM_Z_MAX = 10.0f;
+// Ограничение камеры (только минимальная дистанция по Z, чтобы не уйти в 0)
+static const float CAM_Z_MIN = 0.1f;
 
 // Шаги камеры
 static const float CAM_XY_STEP = 0.1f;
@@ -257,7 +252,7 @@ static void mySolidSphere(float radius, int slices, int stacks) {
 // ═══════════════════════════════════════
 
 void initGL() {
-    glClearColor(SKY_R, SKY_G, SKY_B, 1.0f); // голубое небо
+    glClearColor(SKY_R, SKY_G, SKY_B, 1.0f); // молочный фон
     glEnable(GL_DEPTH_TEST);                   // тест глубины
     glEnable(GL_BLEND);                        // прозрачность
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -391,13 +386,17 @@ void setupLighting() {
 // ═══════════════════════════════════════
 
 void draw3DObjects() {
+    // Отключить запись в буфер глубины для прозрачных объектов,
+    // чтобы задние грани были видны сквозь полупрозрачные передние
+    glDepthMask(GL_FALSE);
+
     // --- Куб (слева) ---
     glPushMatrix();
     glTranslatef(-1.5f, 0.0f, 0.0f);
     glRotatef(30.0f, 1.0f, 1.0f, 0.0f);
 
-    // Материал куба — синий
-    GLfloat cubeDiff[] = {0.2f, 0.4f, 0.8f, transparency};
+    // Материал куба — зелёный
+    GLfloat cubeDiff[] = {0.1f, 0.7f, 0.2f, transparency};
     GLfloat cubeSpec[] = {0.9f, 0.9f, 0.9f, 1.0f};
     GLfloat cubeShin[] = {64.0f};
     glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE,  cubeDiff);
@@ -411,8 +410,8 @@ void draw3DObjects() {
     glPushMatrix();
     glTranslatef(0.0f, 0.0f, 0.0f);
 
-    // Материал пирамиды — оранжевый
-    GLfloat pyrDiff[] = {0.8f, 0.3f, 0.1f, transparency};
+    // Материал пирамиды — фиолетовый
+    GLfloat pyrDiff[] = {0.55f, 0.0f, 0.8f, transparency};
     GLfloat pyrSpec[] = {0.9f, 0.9f, 0.9f, 1.0f};
     GLfloat pyrShin[] = {32.0f};
     glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE,  pyrDiff);
@@ -495,8 +494,8 @@ void draw3DObjects() {
     glPushMatrix();
     glTranslatef(1.5f, 0.0f, 0.0f);
 
-    // Материал сферы — зелёный
-    GLfloat sphDiff[] = {0.1f, 0.7f, 0.2f, transparency};
+    // Материал сферы — синий
+    GLfloat sphDiff[] = {0.15f, 0.35f, 0.85f, transparency};
     GLfloat sphSpec[] = {1.0f, 1.0f, 1.0f, 1.0f};
     GLfloat sphShin[] = {128.0f};
     glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE,  sphDiff);
@@ -506,6 +505,9 @@ void draw3DObjects() {
     mySolidSphere(SPHERE_RADIUS, SPHERE_SLICES, SPHERE_STACKS);
 
     glPopMatrix();
+
+    // Восстановить запись в буфер глубины
+    glDepthMask(GL_TRUE);
 }
 
 // ═══════════════════════════════════════
@@ -561,14 +563,13 @@ void keyCallback(GLFWwindow* window, int key, int /*scancode*/, int action, int 
             offsetY = clampf(offsetY, OFFSET_Y_MIN, OFFSET_Y_MAX);
             break;
 
-        // Камера ближе / дальше (ось Z)
+        // Камера ближе / дальше (ось Z), без верхнего ограничения
         case GLFW_KEY_Q:
             camZ -= CAM_Z_STEP;
-            camZ = clampf(camZ, CAM_Z_MIN, CAM_Z_MAX);
+            if (camZ < CAM_Z_MIN) camZ = CAM_Z_MIN;
             break;
         case GLFW_KEY_E:
             camZ += CAM_Z_STEP;
-            camZ = clampf(camZ, CAM_Z_MIN, CAM_Z_MAX);
             break;
 
         // Яркость освещения (+ / =)
@@ -612,22 +613,18 @@ void keyCallback(GLFWwindow* window, int key, int /*scancode*/, int action, int 
             break;
         }
 
-        // Стрелки — перемещение камеры (3D)
+        // Стрелки — перемещение камеры (3D), без ограничений
         case GLFW_KEY_LEFT:
             camX -= CAM_XY_STEP;
-            camX = clampf(camX, CAM_X_MIN, CAM_X_MAX);
             break;
         case GLFW_KEY_RIGHT:
             camX += CAM_XY_STEP;
-            camX = clampf(camX, CAM_X_MIN, CAM_X_MAX);
             break;
         case GLFW_KEY_UP:
             camY += CAM_XY_STEP;
-            camY = clampf(camY, CAM_Y_MIN, CAM_Y_MAX);
             break;
         case GLFW_KEY_DOWN:
             camY -= CAM_XY_STEP;
-            camY = clampf(camY, CAM_Y_MIN, CAM_Y_MAX);
             break;
 
         // Выход по ESC
