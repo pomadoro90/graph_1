@@ -1,18 +1,18 @@
 // ═══════════════════════════════════════
 // OpenGL Lab 1 — 2D-лес и 3D-примитивы
-// Сборка: CMake + OpenGL + freeglut
+// Сборка: CMake + OpenGL + GLFW
+// Единственный внешний заголовок: GLFW/glfw3.h
 // ═══════════════════════════════════════
+
+#include <GLFW/glfw3.h>
 
 #include <cmath>
 #include <cstdlib>
 
-#ifdef _WIN32
-#include <windows.h>
+// M_PI может отсутствовать на MSVC
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
 #endif
-
-#include <GL/gl.h>
-#include <GL/glu.h>
-#include <GL/glut.h>
 
 // ═══════════════════════════════════════
 // Именованные константы
@@ -68,9 +68,9 @@ static const float PYRAMID_HALF_BASE = 0.5f;
 static const float PYRAMID_HEIGHT    = 1.0f;
 
 // Параметры сферы
-static const float SPHERE_RADIUS  = 0.5f;
-static const int   SPHERE_SLICES  = 32;
-static const int   SPHERE_STACKS  = 32;
+static const float SPHERE_RADIUS = 0.5f;
+static const int   SPHERE_SLICES = 32;
+static const int   SPHERE_STACKS = 32;
 
 // Размер куба
 static const float CUBE_SIZE = 0.8f;
@@ -88,6 +88,9 @@ static const float GROUND_B = 0.05f;
 // ═══════════════════════════════════════
 // Глобальные переменные состояния
 // ═══════════════════════════════════════
+
+// Указатель на окно GLFW
+GLFWwindow* gWindow = nullptr;
 
 // Смещение 2D-сцены
 float offsetX = 0.0f;
@@ -115,6 +118,138 @@ static float clampf(float val, float lo, float hi) {
     if (val < lo) return lo;
     if (val > hi) return hi;
     return val;
+}
+
+// ═══════════════════════════════════════
+// Замена gluPerspective — перспективная проекция через glFrustum
+// ═══════════════════════════════════════
+
+static void myPerspective(double fovy, double aspect, double zNear, double zFar) {
+    double top   = zNear * std::tan(fovy * M_PI / 360.0);
+    double right = top * aspect;
+    glFrustum(-right, right, -top, top, zNear, zFar);
+}
+
+// ═══════════════════════════════════════
+// Замена gluLookAt — установка матрицы камеры вручную
+// ═══════════════════════════════════════
+
+static void myLookAt(double eyeX, double eyeY, double eyeZ,
+                     double centerX, double centerY, double centerZ,
+                     double upX, double upY, double upZ) {
+    // Вектор направления взгляда (forward)
+    double fx = centerX - eyeX;
+    double fy = centerY - eyeY;
+    double fz = centerZ - eyeZ;
+    double fLen = std::sqrt(fx * fx + fy * fy + fz * fz);
+    fx /= fLen; fy /= fLen; fz /= fLen;
+
+    // Боковой вектор (side = forward x up)
+    double sx = fy * upZ - fz * upY;
+    double sy = fz * upX - fx * upZ;
+    double sz = fx * upY - fy * upX;
+    double sLen = std::sqrt(sx * sx + sy * sy + sz * sz);
+    sx /= sLen; sy /= sLen; sz /= sLen;
+
+    // Вертикальный вектор (u = side x forward)
+    double ux = sy * fz - sz * fy;
+    double uy = sz * fx - sx * fz;
+    double uz = sx * fy - sy * fx;
+
+    // Матрица в column-major порядке для OpenGL
+    double m[16] = {
+         sx,  ux, -fx, 0.0,
+         sy,  uy, -fy, 0.0,
+         sz,  uz, -fz, 0.0,
+        0.0, 0.0, 0.0, 1.0
+    };
+    glMultMatrixd(m);
+    glTranslated(-eyeX, -eyeY, -eyeZ);
+}
+
+// ═══════════════════════════════════════
+// Замена glutSolidCube — куб из шести граней с нормалями
+// ═══════════════════════════════════════
+
+static void mySolidCube(float size) {
+    float h = size / 2.0f;
+
+    glBegin(GL_QUADS);
+        // Передняя грань (+Z)
+        glNormal3f(0.0f, 0.0f, 1.0f);
+        glVertex3f(-h, -h,  h);
+        glVertex3f( h, -h,  h);
+        glVertex3f( h,  h,  h);
+        glVertex3f(-h,  h,  h);
+
+        // Задняя грань (-Z)
+        glNormal3f(0.0f, 0.0f, -1.0f);
+        glVertex3f( h, -h, -h);
+        glVertex3f(-h, -h, -h);
+        glVertex3f(-h,  h, -h);
+        glVertex3f( h,  h, -h);
+
+        // Верхняя грань (+Y)
+        glNormal3f(0.0f, 1.0f, 0.0f);
+        glVertex3f(-h,  h,  h);
+        glVertex3f( h,  h,  h);
+        glVertex3f( h,  h, -h);
+        glVertex3f(-h,  h, -h);
+
+        // Нижняя грань (-Y)
+        glNormal3f(0.0f, -1.0f, 0.0f);
+        glVertex3f(-h, -h, -h);
+        glVertex3f( h, -h, -h);
+        glVertex3f( h, -h,  h);
+        glVertex3f(-h, -h,  h);
+
+        // Правая грань (+X)
+        glNormal3f(1.0f, 0.0f, 0.0f);
+        glVertex3f( h, -h,  h);
+        glVertex3f( h, -h, -h);
+        glVertex3f( h,  h, -h);
+        glVertex3f( h,  h,  h);
+
+        // Левая грань (-X)
+        glNormal3f(-1.0f, 0.0f, 0.0f);
+        glVertex3f(-h, -h, -h);
+        glVertex3f(-h, -h,  h);
+        glVertex3f(-h,  h,  h);
+        glVertex3f(-h,  h, -h);
+    glEnd();
+}
+
+// ═══════════════════════════════════════
+// Замена gluSphere — сфера из параметрических полос
+// ═══════════════════════════════════════
+
+static void mySolidSphere(float radius, int slices, int stacks) {
+    for (int i = 0; i < stacks; ++i) {
+        // Широтные углы для текущей и следующей полосы
+        float lat0 = static_cast<float>(M_PI) * (-0.5f + static_cast<float>(i) / stacks);
+        float lat1 = static_cast<float>(M_PI) * (-0.5f + static_cast<float>(i + 1) / stacks);
+
+        float y0  = std::sin(lat0);
+        float yr0 = std::cos(lat0);
+        float y1  = std::sin(lat1);
+        float yr1 = std::cos(lat1);
+
+        glBegin(GL_QUAD_STRIP);
+        for (int j = 0; j <= slices; ++j) {
+            float lng = 2.0f * static_cast<float>(M_PI) * static_cast<float>(j) / slices;
+            float x = std::cos(lng);
+            float z = std::sin(lng);
+
+            // Нижняя вершина полосы
+            glNormal3f(x * yr0, y0, z * yr0);
+            glVertex3f(radius * x * yr0, radius * y0, radius * z * yr0);
+
+            // Верхняя вершина полосы
+            glNormal3f(x * yr1, y1, z * yr1);
+            glVertex3f(radius * x * yr1, radius * y1, radius * z * yr1);
+        }
+        glEnd();
+    }
 }
 
 // ═══════════════════════════════════════
@@ -146,10 +281,15 @@ void reshape(int w, int h) {
         glOrtho(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0);
     } else {
         // Перспективная проекция для 3D
-        gluPerspective(45.0, static_cast<double>(w) / h, 0.1, 100.0);
+        myPerspective(45.0, static_cast<double>(w) / h, 0.1, 100.0);
     }
 
     glMatrixMode(GL_MODELVIEW);
+}
+
+// Обёртка-колбэк для GLFW (framebuffer size)
+static void framebufferSizeCallback(GLFWwindow* /*window*/, int w, int h) {
+    reshape(w, h);
 }
 
 // ═══════════════════════════════════════
@@ -260,11 +400,11 @@ void draw3DObjects() {
     GLfloat cubeDiff[] = {0.2f, 0.4f, 0.8f, transparency};
     GLfloat cubeSpec[] = {0.9f, 0.9f, 0.9f, 1.0f};
     GLfloat cubeShin[] = {64.0f};
-    glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE,   cubeDiff);
-    glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR,  cubeSpec);
-    glMaterialfv(GL_FRONT_AND_BACK, GL_SHININESS,  cubeShin);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE,  cubeDiff);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, cubeSpec);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_SHININESS, cubeShin);
 
-    glutSolidCube(CUBE_SIZE);
+    mySolidCube(CUBE_SIZE);
     glPopMatrix();
 
     // --- Пирамида (по центру) ---
@@ -275,9 +415,9 @@ void draw3DObjects() {
     GLfloat pyrDiff[] = {0.8f, 0.3f, 0.1f, transparency};
     GLfloat pyrSpec[] = {0.9f, 0.9f, 0.9f, 1.0f};
     GLfloat pyrShin[] = {32.0f};
-    glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE,   pyrDiff);
-    glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR,  pyrSpec);
-    glMaterialfv(GL_FRONT_AND_BACK, GL_SHININESS,  pyrShin);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE,  pyrDiff);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, pyrSpec);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_SHININESS, pyrShin);
 
     // Вершины пирамиды
     float b = PYRAMID_HALF_BASE; // полуразмер основания
@@ -359,14 +499,11 @@ void draw3DObjects() {
     GLfloat sphDiff[] = {0.1f, 0.7f, 0.2f, transparency};
     GLfloat sphSpec[] = {1.0f, 1.0f, 1.0f, 1.0f};
     GLfloat sphShin[] = {128.0f};
-    glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE,   sphDiff);
-    glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR,  sphSpec);
-    glMaterialfv(GL_FRONT_AND_BACK, GL_SHININESS,  sphShin);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE,  sphDiff);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, sphSpec);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_SHININESS, sphShin);
 
-    GLUquadricObj* q = gluNewQuadric();
-    gluQuadricNormals(q, GLU_SMOOTH);
-    gluSphere(q, SPHERE_RADIUS, SPHERE_SLICES, SPHERE_STACKS);
-    gluDeleteQuadric(q);
+    mySolidSphere(SPHERE_RADIUS, SPHERE_SLICES, SPHERE_STACKS);
 
     glPopMatrix();
 }
@@ -389,144 +526,163 @@ void display() {
     } else {
         // Режим 3D — включить освещение, установить камеру
         setupLighting();
-        gluLookAt(camX, camY, camZ,
-                  0.0, 0.0, 0.0,
-                  0.0, 1.0, 0.0);
+        myLookAt(camX, camY, camZ,
+                 0.0, 0.0, 0.0,
+                 0.0, 1.0, 0.0);
         draw3DObjects();
         glDisable(GL_LIGHTING);
     }
-
-    glutSwapBuffers();
 }
 
 // ═══════════════════════════════════════
-// Обработка обычных клавиш
+// Обработка клавиш (колбэк GLFW)
 // ═══════════════════════════════════════
 
-void keyboard(unsigned char key, int /*x*/, int /*y*/) {
+void keyCallback(GLFWwindow* window, int key, int /*scancode*/, int action, int /*mods*/) {
+    // Реагируем на нажатие и повтор
+    if (action != GLFW_PRESS && action != GLFW_REPEAT) return;
+
     switch (key) {
         // Перемещение 2D-сцены
-        case 'a': case 'A':
+        case GLFW_KEY_A:
             offsetX -= OFFSET_STEP;
             offsetX = clampf(offsetX, OFFSET_X_MIN, OFFSET_X_MAX);
             break;
-        case 'd': case 'D':
+        case GLFW_KEY_D:
             offsetX += OFFSET_STEP;
             offsetX = clampf(offsetX, OFFSET_X_MIN, OFFSET_X_MAX);
             break;
-        case 'w': case 'W':
+        case GLFW_KEY_W:
             offsetY += OFFSET_STEP;
             offsetY = clampf(offsetY, OFFSET_Y_MIN, OFFSET_Y_MAX);
             break;
-        case 's': case 'S':
+        case GLFW_KEY_S:
             offsetY -= OFFSET_STEP;
             offsetY = clampf(offsetY, OFFSET_Y_MIN, OFFSET_Y_MAX);
             break;
 
         // Камера ближе / дальше (ось Z)
-        case 'q': case 'Q':
+        case GLFW_KEY_Q:
             camZ -= CAM_Z_STEP;
             camZ = clampf(camZ, CAM_Z_MIN, CAM_Z_MAX);
             break;
-        case 'e': case 'E':
+        case GLFW_KEY_E:
             camZ += CAM_Z_STEP;
             camZ = clampf(camZ, CAM_Z_MIN, CAM_Z_MAX);
             break;
 
-        // Яркость освещения
-        case '+': case '=':
+        // Яркость освещения (+ / =)
+        case GLFW_KEY_EQUAL:
+        case GLFW_KEY_KP_ADD:
             lightBrightness += BRIGHTNESS_STEP;
             lightBrightness = clampf(lightBrightness, BRIGHTNESS_MIN, BRIGHTNESS_MAX);
             break;
-        case '-':
+        // Яркость освещения (-)
+        case GLFW_KEY_MINUS:
+        case GLFW_KEY_KP_SUBTRACT:
             lightBrightness -= BRIGHTNESS_STEP;
             lightBrightness = clampf(lightBrightness, BRIGHTNESS_MIN, BRIGHTNESS_MAX);
             break;
 
         // Прозрачность 3D-объектов
-        case '[':
+        case GLFW_KEY_LEFT_BRACKET:
             transparency -= TRANSPARENCY_STEP;
             transparency = clampf(transparency, TRANSPARENCY_MIN, TRANSPARENCY_MAX);
             break;
-        case ']':
+        case GLFW_KEY_RIGHT_BRACKET:
             transparency += TRANSPARENCY_STEP;
             transparency = clampf(transparency, TRANSPARENCY_MIN, TRANSPARENCY_MAX);
             break;
 
         // Переключение режимов
-        case '1':
+        case GLFW_KEY_1: {
             sceneMode = 0;
             offsetX = 0.0f;
             offsetY = 0.0f;
-            reshape(glutGet(GLUT_WINDOW_WIDTH), glutGet(GLUT_WINDOW_HEIGHT));
+            int w, h;
+            glfwGetFramebufferSize(window, &w, &h);
+            reshape(w, h);
             break;
-        case '2':
+        }
+        case GLFW_KEY_2: {
             sceneMode = 1;
-            reshape(glutGet(GLUT_WINDOW_WIDTH), glutGet(GLUT_WINDOW_HEIGHT));
+            int w, h;
+            glfwGetFramebufferSize(window, &w, &h);
+            reshape(w, h);
             break;
+        }
 
-        // Выход по ESC
-        case 27:
-            exit(0);
-            break;
-
-        default:
-            break;
-    }
-
-    glutPostRedisplay();
-}
-
-// ═══════════════════════════════════════
-// Обработка специальных клавиш (стрелки)
-// ═══════════════════════════════════════
-
-void specialKeys(int key, int /*x*/, int /*y*/) {
-    switch (key) {
-        case GLUT_KEY_LEFT:
+        // Стрелки — перемещение камеры (3D)
+        case GLFW_KEY_LEFT:
             camX -= CAM_XY_STEP;
             camX = clampf(camX, CAM_X_MIN, CAM_X_MAX);
             break;
-        case GLUT_KEY_RIGHT:
+        case GLFW_KEY_RIGHT:
             camX += CAM_XY_STEP;
             camX = clampf(camX, CAM_X_MIN, CAM_X_MAX);
             break;
-        case GLUT_KEY_UP:
+        case GLFW_KEY_UP:
             camY += CAM_XY_STEP;
             camY = clampf(camY, CAM_Y_MIN, CAM_Y_MAX);
             break;
-        case GLUT_KEY_DOWN:
+        case GLFW_KEY_DOWN:
             camY -= CAM_XY_STEP;
             camY = clampf(camY, CAM_Y_MIN, CAM_Y_MAX);
             break;
+
+        // Выход по ESC
+        case GLFW_KEY_ESCAPE:
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+            break;
+
         default:
             break;
     }
-
-    glutPostRedisplay();
 }
 
 // ═══════════════════════════════════════
 // Точка входа
 // ═══════════════════════════════════════
 
-int main(int argc, char** argv) {
-    glutInit(&argc, argv);
-    glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
-    glutInitWindowSize(WINDOW_WIDTH, WINDOW_HEIGHT);
-    glutCreateWindow("OpenGL Lab 1");
+int main(int /*argc*/, char** /*argv*/) {
+    // Инициализация GLFW
+    if (!glfwInit()) {
+        return -1;
+    }
 
-    // Регистрация функций обратного вызова
-    glutDisplayFunc(display);
-    glutReshapeFunc(reshape);
-    glutKeyboardFunc(keyboard);
-    glutSpecialFunc(specialKeys);
+    // Создание окна
+    gWindow = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "OpenGL Lab 1", nullptr, nullptr);
+    if (!gWindow) {
+        glfwTerminate();
+        return -1;
+    }
+
+    // Установить контекст OpenGL
+    glfwMakeContextCurrent(gWindow);
+
+    // Регистрация колбэков
+    glfwSetFramebufferSizeCallback(gWindow, framebufferSizeCallback);
+    glfwSetKeyCallback(gWindow, keyCallback);
 
     // Инициализация OpenGL
     initGL();
 
-    // Главный цикл обработки событий
-    glutMainLoop();
+    // Первоначальная настройка проекции
+    {
+        int w, h;
+        glfwGetFramebufferSize(gWindow, &w, &h);
+        reshape(w, h);
+    }
 
+    // Главный цикл отрисовки
+    while (!glfwWindowShouldClose(gWindow)) {
+        display();
+        glfwSwapBuffers(gWindow);
+        glfwPollEvents();
+    }
+
+    // Освобождение ресурсов
+    glfwDestroyWindow(gWindow);
+    glfwTerminate();
     return 0;
 }
